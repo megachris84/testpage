@@ -1,0 +1,371 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Camera Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+
+<style>
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: #0b1120;
+  color: white;
+  font-family: Arial, sans-serif;
+  padding: 25px;
+}
+
+.container {
+  max-width: 950px;
+  margin: auto;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.status {
+  color: #22c55e;
+  font-size: 13px;
+}
+
+video {
+  width: 100%;
+  background: black;
+  border-radius: 12px;
+  aspect-ratio: 16 / 9;
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-top: 20px;
+}
+
+button {
+  border: 0;
+  padding: 17px 8px;
+  border-radius: 9px;
+  color: white;
+  font-size: 15px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+}
+
+.start { background: #15803d; }
+.stop { background: #b91c1c; }
+.download { background: #2563eb; }
+
+.info {
+  margin-top: 20px;
+  padding: 16px;
+  background: #172033;
+  border-radius: 10px;
+  color: #cbd5e1;
+}
+
+@media(max-width: 500px) {
+  body { padding: 14px; }
+  .controls { gap: 7px; }
+  button { font-size: 12px; }
+}
+</style>
+</head>
+
+<body>
+<div class="container">
+
+<header>
+  <h2>Camera Dashboard</h2>
+  <span class="status" id="connection">● CONNECTING</span>
+</header>
+
+<video id="camera" controls autoplay muted playsinline></video>
+
+<div class="controls">
+  <button class="start" id="start" disabled>▶ START</button>
+  <button class="stop" id="stop" disabled>■ STOP</button>
+  <button class="download" id="download" disabled>↓ DOWNLOAD</button>
+</div>
+
+<div class="info">
+  <p id="recordStatus">Recording: Checking...</p>
+  <p id="message">Connecting to camera server...</p>
+</div>
+
+</div>
+
+<script>
+
+// =====================================
+// CONFIGURATION
+// =====================================
+
+const API = "https://prime-dangerous-poet-yet.trycloudflare.com";
+
+// Replace this with your actual HLS stream URL.
+const STREAM = "https://dytbda6r.free.tryportwarp.cc/cam/index.m3u8";
+
+// =====================================
+// DEVICE ID
+// =====================================
+
+let deviceId = localStorage.getItem("cameraDeviceId");
+
+if (!deviceId) {
+  deviceId = crypto.randomUUID();
+  localStorage.setItem("cameraDeviceId", deviceId);
+}
+
+// =====================================
+// ELEMENTS
+// =====================================
+
+const video = document.getElementById("camera");
+const connection = document.getElementById("connection");
+const recordStatus = document.getElementById("recordStatus");
+const message = document.getElementById("message");
+
+const startButton = document.getElementById("start");
+const stopButton = document.getElementById("stop");
+const downloadButton = document.getElementById("download");
+
+// =====================================
+// HLS VIDEO STREAM
+// =====================================
+
+if (Hls.isSupported()) {
+
+  const hls = new Hls();
+
+  hls.loadSource(STREAM);
+  hls.attachMedia(video);
+
+  hls.on(Hls.Events.ERROR, (event, data) => {
+    if (data.fatal) {
+      message.textContent = "Camera stream unavailable.";
+    }
+  });
+
+} else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+
+  video.src = STREAM;
+
+}
+
+// =====================================
+// API REQUEST FUNCTION
+// =====================================
+
+async function request(path) {
+
+  const response = await fetch(API + path, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ deviceId })
+  });
+
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+// =====================================
+// UPDATE DASHBOARD
+// =====================================
+
+function updateDashboard(data) {
+
+  const status = data.status;
+
+  recordStatus.textContent = "Recording: " + status;
+
+  if (status === "idle") {
+
+    startButton.disabled = false;
+    stopButton.disabled = true;
+    downloadButton.disabled = true;
+
+  }
+
+  else if (
+    status === "recording" ||
+    status === "waiting_for_postroll"
+  ) {
+
+    startButton.disabled = true;
+    stopButton.disabled = false;
+    downloadButton.disabled = true;
+
+  }
+
+  else if (
+    status === "waiting_for_files" ||
+    status === "processing"
+  ) {
+
+    startButton.disabled = true;
+    stopButton.disabled = true;
+    downloadButton.disabled = true;
+
+  }
+
+  else if (status === "ready") {
+
+    startButton.disabled = false;
+    stopButton.disabled = true;
+    downloadButton.disabled = false;
+
+  }
+
+  else if (status === "error") {
+
+    startButton.disabled = false;
+    stopButton.disabled = true;
+    downloadButton.disabled = true;
+
+    message.textContent = data.error || "Clip processing failed.";
+
+  }
+
+}
+
+// =====================================
+// CHECK SERVER STATUS
+// =====================================
+
+async function checkStatus() {
+
+  try {
+
+    const data = await request("/api/status");
+
+    connection.textContent = "● API CONNECTED";
+    updateDashboard(data);
+
+  } catch (error) {
+
+    connection.textContent = "● API OFFLINE";
+
+    startButton.disabled = true;
+    stopButton.disabled = true;
+    downloadButton.disabled = true;
+
+    message.textContent = "Cannot connect to camera server.";
+
+  }
+
+}
+
+// =====================================
+// START RECORDING
+// =====================================
+
+startButton.onclick = async () => {
+
+  startButton.disabled = true;
+  message.textContent = "Starting recording...";
+
+  try {
+
+    const data = await request("/api/start");
+
+    updateDashboard(data);
+    message.textContent = "Recording started.";
+
+  } catch (error) {
+
+    message.textContent = "Unable to start recording.";
+    await checkStatus();
+
+  }
+
+};
+
+// =====================================
+// STOP RECORDING
+// =====================================
+
+stopButton.onclick = async () => {
+
+  stopButton.disabled = true;
+  message.textContent = "Stopping recording...";
+
+  try {
+
+    const data = await request("/api/stop");
+
+    updateDashboard(data);
+
+    message.textContent =
+      "Waiting for final footage and processing.";
+
+  } catch (error) {
+
+    message.textContent = "Unable to stop recording.";
+    await checkStatus();
+
+  }
+
+};
+
+// =====================================
+// DOWNLOAD CLIP
+// =====================================
+
+downloadButton.onclick = async () => {
+
+  downloadButton.disabled = true;
+  message.textContent = "Preparing download...";
+
+  try {
+
+    const result = await request("/api/download");
+
+    const downloadURL = new URL(
+      result.downloadUrl,
+      API
+    );
+
+    window.location.href = downloadURL.href;
+
+    message.textContent = "Download started.";
+
+  } catch (error) {
+
+    message.textContent =
+      "Clip is not ready for download.";
+
+    await checkStatus();
+
+  }
+
+};
+
+// =====================================
+// AUTOMATIC STATUS UPDATES
+// =====================================
+
+checkStatus();
+
+setInterval(checkStatus, 2000);
+
+</script>
+</body>
+</html>
